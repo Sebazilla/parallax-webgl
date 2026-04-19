@@ -15,56 +15,50 @@ import {
   FilesetResolver,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9/vision_bundle.mjs';
 
-// ---- Device geometry (meters) — tuned for iPhone 16 Plus, approx OK for other phones.
-const SCREEN_W = 0.077;
-const SCREEN_H = 0.160;
-const CAMERA_TO_SCREEN_CENTER_Y = 0.086;
+// ---- Device geometry (meters). Canvas dimensions derived from CSS pixels.
+// iPhone 16 Plus: 1 CSS px ≈ 0.181 mm. Camera lens sits roughly 20 mm above canvas top.
+const CSS_PX_TO_M = 0.000181;
+const CAMERA_ABOVE_CANVAS_TOP = 0.020;
+
+let SCREEN_W = 0.077;
+let SCREEN_H = 0.150;
+let CAMERA_TO_SCREEN_CENTER_Y = 0.095;
+
+function updateGeometry() {
+  SCREEN_W = Math.max(0.03, window.innerWidth * CSS_PX_TO_M);
+  SCREEN_H = Math.max(0.05, window.innerHeight * CSS_PX_TO_M);
+  CAMERA_TO_SCREEN_CENTER_Y = CAMERA_ABOVE_CANVAS_TOP + SCREEN_H / 2;
+}
 
 // ---- Face tracking defaults
 const IOD_METERS = 0.063;
 const CAMERA_HFOV_DEG = 70;
 
-// ---- Scene layers (no cats — cats are spawned separately for the game).
-// Depths compressed tightly: bg at -0.12, foreground between -0.10 and -0.035.
-// BG plane is oversized (2m) so it fills view like a VR skybox at any head angle.
-// renderOrder is LAYERS index * 10, so cats can be inserted in the gaps.
-const LAYERS = [
-  { name: 'wimmel_bg',        h: 2.00,  aspect: 0.67, x:  0.000, y:  0.000, z: -0.120 },
-  { name: 'obj_rug',          h: 0.10,  aspect: 1.60, x: -0.010, y: -0.100, z: -0.095 },
-  { name: 'obj_wall_clock',   h: 0.07,  aspect: 0.75, x:  0.085, y:  0.030, z: -0.085 },
-  { name: 'obj_framed_photo', h: 0.05,  aspect: 1.33, x: -0.085, y:  0.060, z: -0.080 },
-  { name: 'obj_floor_lamp',   h: 0.22,  aspect: 0.40, x: -0.075, y:  0.020, z: -0.072 },
-  { name: 'obj_plant',        h: 0.09,  aspect: 0.75, x:  0.075, y: -0.045, z: -0.068 },
-  { name: 'obj_curtain_left', h: 0.40,  aspect: 0.57, x: -0.055, y:  0.020, z: -0.062 },
-  { name: 'curtain_right',    h: 0.40,  aspect: 0.57, x:  0.085, y:  0.020, z: -0.060 },
-  { name: 'obj_throw_pillow', h: 0.04,  aspect: 1.00, x:  0.020, y: -0.035, z: -0.052 },
-  { name: 'obj_teapot',       h: 0.05,  aspect: 1.00, x: -0.025, y: -0.062, z: -0.048 },
-  { name: 'obj_teacup',       h: 0.035, aspect: 1.00, x:  0.015, y: -0.060, z: -0.046 },
-  { name: 'obj_books_stack',  h: 0.03,  aspect: 1.20, x: -0.060, y: -0.040, z: -0.044 },
-  { name: 'obj_flower_vase',  h: 0.05,  aspect: 0.67, x:  0.060, y: -0.025, z: -0.042 },
-  { name: 'obj_candle',       h: 0.05,  aspect: 0.50, x:  0.040, y: -0.058, z: -0.040 },
-  { name: 'obj_teddy_bear',   h: 0.07,  aspect: 0.75, x: -0.015, y: -0.048, z: -0.035 },
+// ---- Scene composition: BG plane + 5 foreground hiders.
+// Scale is tuned so BG visibly fills the frame with generous overflow margin for
+// head-tilt VR feel; hiders are substantial and close-to-screen to feel "in the room";
+// cats hide one behind each hider (deeper z + matched XY).
+const BG = { name: 'wimmel_bg', h: 0.30, aspect: 0.67, x: 0.000, y: 0.000, z: -0.100 };
+
+const HIDERS = [
+  { name: 'obj_curtain_left', h: 0.220, aspect: 0.35, x: -0.040, y:  0.028, z: -0.055 },
+  { name: 'curtain_right',    h: 0.220, aspect: 0.35, x:  0.040, y:  0.028, z: -0.055 },
+  { name: 'obj_floor_lamp',   h: 0.130, aspect: 0.40, x: -0.050, y: -0.005, z: -0.048 },
+  { name: 'obj_plant',        h: 0.075, aspect: 0.75, x:  0.048, y: -0.052, z: -0.040 },
+  { name: 'obj_teddy_bear',   h: 0.060, aspect: 0.75, x:  0.012, y: -0.065, z: -0.032 },
 ];
 
-// Build a lookup from layer name -> renderOrder (index * 10).
-const LAYER_ORDER = Object.fromEntries(LAYERS.map((L, i) => [L.name, i * 10]));
-
-// ---- Hidden cats: positioned behind a specific foreground layer.
-// Each cat is placed at a depth between the BG and its hiding layer; its
-// renderOrder is just BELOW the hiding layer's renderOrder so the layer
-// paints over it. Parallax slides cat out from behind the object.
-const CAT_SIZE_H = 0.045;        // ~4.5cm tall — small enough to be hideable
+// Each cat sits behind ONE hider (deeper z, matched XY). Cat renderOrder is below
+// its hider's so the hider paints over it — cat only becomes visible through
+// parallax when the user tilts their head.
+const CAT_H = 0.028;
+const CAT_OFFSET_Z = -0.025; // cat sits this much deeper than its hider
 const CATS_TEMPLATE = [
-  // Behind floor lamp (tall skinny shade) — cat peeks out at the side
-  { x: -0.080, y: -0.020, z: -0.080, hideLayer: 'obj_floor_lamp' },
-  // Behind plant foliage — cat peeks out beside the pot
-  { x:  0.075, y: -0.040, z: -0.075, hideLayer: 'obj_plant' },
-  // Behind curtain_left folds
-  { x: -0.060, y: -0.040, z: -0.070, hideLayer: 'obj_curtain_left' },
-  // Behind curtain_right folds
-  { x:  0.085, y:  0.005, z: -0.068, hideLayer: 'curtain_right' },
-  // Behind teddy bear — hardest to find
-  { x: -0.015, y: -0.058, z: -0.050, hideLayer: 'obj_teddy_bear' },
+  { dx: -0.010, dy:  0.000, hideIdx: 0 }, // behind curtain_left
+  { dx:  0.010, dy:  0.000, hideIdx: 1 }, // behind curtain_right
+  { dx:  0.018, dy: -0.020, hideIdx: 2 }, // behind floor lamp
+  { dx: -0.010, dy:  0.000, hideIdx: 3 }, // behind plant
+  { dx:  0.000, dy: -0.005, hideIdx: 4 }, // behind teddy bear
 ];
 
 const FAR = 10.0;
@@ -88,6 +82,7 @@ window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 
 function resize() {
+  updateGeometry();
   renderer.setSize(window.innerWidth, window.innerHeight, false);
 }
 
@@ -116,15 +111,21 @@ function makeLayer({ name, h, aspect, x, y, z }, renderOrder, writesDepth = fals
   return mesh;
 }
 
-// Build scene layers.
-for (let i = 0; i < LAYERS.length; i++) {
-  scene.add(makeLayer(LAYERS[i], i * 10, /* writesDepth */ i === 0));
+// BG at renderOrder 0, writes depth.
+const bgMesh = makeLayer(BG, 0, /* writesDepth */ true);
+scene.add(bgMesh);
+
+// Hiders at renderOrder 20, 40, 60, ..., leaving gaps for cats at 15, 35, 55, ...
+const hiderMeshes = [];
+for (let i = 0; i < HIDERS.length; i++) {
+  const m = makeLayer(HIDERS[i], 20 + i * 20, false);
+  scene.add(m);
+  hiderMeshes.push(m);
 }
 
-// ---- Cat spawning
+// ---- Cat spawning (re-callable for next level)
 let catMeshes = [];
 function spawnCats() {
-  // Clear old cats.
   for (const m of catMeshes) {
     scene.remove(m);
     m.material.map?.dispose();
@@ -135,10 +136,18 @@ function spawnCats() {
 
   for (let i = 0; i < CATS_TEMPLATE.length; i++) {
     const t = CATS_TEMPLATE[i];
-    const hideOrder = LAYER_ORDER[t.hideLayer];
+    const hider = HIDERS[t.hideIdx];
+    const hiderOrder = 20 + t.hideIdx * 20;
     const mesh = makeLayer(
-      { name: 'cat', h: CAT_SIZE_H, aspect: 1.0, x: t.x, y: t.y, z: t.z },
-      hideOrder - 1, // just behind the layer that hides it
+      {
+        name: 'cat',
+        h: CAT_H,
+        aspect: 1.0,
+        x: hider.x + t.dx,
+        y: hider.y + t.dy,
+        z: hider.z + CAT_OFFSET_Z,
+      },
+      hiderOrder - 5,
       false,
     );
     mesh.userData.catId = i;
@@ -162,7 +171,7 @@ function setOffAxisProjection(cam, l, r, b, t, n, f) {
 // ---- Face tracking state
 let faceLandmarker = null;
 let hasFace = false;
-const eye = { x: 0, y: 0, z: 0.45 };
+const eye = { x: 0, y: 0, z: 0.30 };
 const EMA = 0.35;
 
 async function initFaceLandmarker() {
@@ -239,7 +248,7 @@ function stepFaceTracking() {
 }
 
 function updateCameraProjection() {
-  const ez = Math.max(eye.z, 0.05);
+  const ez = Math.max(eye.z, 0.08);
   camera.position.set(eye.x, eye.y, ez);
   camera.quaternion.identity();
   camera.updateMatrixWorld(true);
@@ -289,7 +298,6 @@ function showToast(text, duration = 1200) {
 function onCatFound(mesh) {
   if (mesh.userData.found) return;
   mesh.userData.found = true;
-  // Hide the cat with a small pop.
   mesh.visible = false;
   foundCount += 1;
   updateCounter();
@@ -317,7 +325,6 @@ function handleTap(clientX, clientY) {
     -((clientY - rect.top) / rect.height) * 2 + 1,
     0.5,
   );
-  // Unproject NDC -> world using the custom projection.
   ndc.unproject(camera);
   raycaster.ray.origin.copy(camera.position);
   raycaster.ray.direction.copy(ndc).sub(camera.position).normalize();
