@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <title>Parallax Wimmelbild</title>
+  <title>Find the Cat</title>
   <style>
     html, body {
       margin: 0;
@@ -31,16 +31,15 @@
       opacity: 0;
       pointer-events: none;
     }
-    #start, #hud {
+    #start, #hud, #counter, #toast {
       position: fixed;
-      left: 0;
-      right: 0;
       color: #fff;
       font-family: -apple-system, system-ui, sans-serif;
       text-align: center;
       pointer-events: none;
     }
     #start {
+      left: 0; right: 0;
       top: 0; bottom: 0;
       display: flex;
       flex-direction: column;
@@ -52,7 +51,7 @@
       cursor: pointer;
     }
     #start h1 {
-      font-size: 22px;
+      font-size: 24px;
       margin: 0 0 8px;
       font-weight: 600;
     }
@@ -72,22 +71,54 @@
       font-weight: 600;
     }
     #hud {
-      bottom: 16px;
-      font-size: 11px;
-      opacity: 0.5;
+      left: 0; right: 0;
+      bottom: 8px;
+      font-size: 10px;
+      opacity: 0.4;
       letter-spacing: 0.3px;
     }
     #hud.hidden { display: none; }
+    #counter {
+      left: 0; right: 0;
+      top: calc(env(safe-area-inset-top, 0) + 12px);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+    }
+    #counter.hidden { display: none; }
+    #toast {
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scale(0.8);
+      background: rgba(255, 217, 90, 0.95);
+      color: #1a1a1a;
+      font-size: 32px;
+      font-weight: 800;
+      padding: 16px 40px;
+      border-radius: 18px;
+      opacity: 0;
+      transition: opacity 220ms ease, transform 220ms cubic-bezier(0.3, 1.6, 0.5, 1);
+      z-index: 20;
+      white-space: nowrap;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
   </style>
 </head>
 <body>
   <canvas id="scene"></canvas>
   <video id="cam" playsinline autoplay muted></video>
   <div id="start">
-    <h1>Parallax Wimmelbild</h1>
-    <p>Tippen um zu starten — danach bitte Kamera freigeben, um Kopf-Tracking zu aktivieren.</p>
+    <h1>Find the Cat</h1>
+    <p>Bewege deinen Kopf und finde die 5 versteckten Katzen.<br>Tippe Kamera-Freigabe zum Starten.</p>
     <button id="startBtn">Starten</button>
   </div>
+  <div id="counter" class="hidden">0 / 5</div>
+  <div id="toast"></div>
   <div id="hud" class="hidden"></div>
   <script type="module" src="./main.js"></script>
 </body>
