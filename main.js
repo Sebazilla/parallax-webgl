@@ -64,6 +64,28 @@ const HIDERS = [
 const CAT_DEPTH_OFFSETS = [-0.020, -0.016, -0.018, -0.022, -0.014]; // added to hider z
 const CAT_H = 0.028;
 
+// DECOR — purely visual props. No cat hides behind them; they exist to fill the
+// scene and give more depth layers so different items parallax at slightly
+// different rates. All sit behind the cats (z < -0.024) so they never occlude cats.
+const DECOR = [
+  // Wide rug along the floor, far back.
+  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.050 },
+  // Floor lamp standing on the far left.
+  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.043 },
+  // Potted plant in the right corner.
+  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.040 },
+  // Wall clock, high on the back wall.
+  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.048 },
+  // Flower vase on a shelf upper-left.
+  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.038 },
+  // Teapot on a low table, left-centre.
+  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.032 },
+  // Teacup next to teapot.
+  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.028 },
+  // Candle to the right of the teapot.
+  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.030 },
+];
+
 const FAR = 10.0;
 const NEAR_RESCALE = 0.01;
 
@@ -122,6 +144,11 @@ function makeLayer({ name, h, aspect, x, y, z, mirror }, renderOrder, writesDept
 // BG renders first and writes depth.
 const bgMesh = makeLayer(BG, 0, /* writesDepth */ true);
 scene.add(bgMesh);
+
+// Decor at renderOrder 5 (behind cats at 10, in front of BG at 0).
+for (const d of DECOR) {
+  scene.add(makeLayer(d, 5, false));
+}
 
 // Hiders paint on top of cats. renderOrder 20 > cat's 10.
 for (const h of HIDERS) {
