@@ -30,24 +30,25 @@ const CAMERA_HFOV_DEG = 70;
 // ---- Parallax layer descriptors. Order = back to front.
 // heightMeters = physical height of the layer plane in scene space.
 // x, y = offset from SCREEN CENTER (not scene origin).
-// z = depth (negative = behind screen).
+// z = depth (negative = behind screen). Range compressed for subtler parallax.
+// Cat sits as second-to-last layer; teddy_bear is closest.
 const LAYERS = [
-  { name: 'wimmel_bg',        h: 0.45, aspect: 0.67, x:  0.000, y:  0.000, z: -0.55 },
-  { name: 'obj_rug',          h: 0.03, aspect: 1.60, x: -0.010, y: -0.058, z: -0.50 },
-  { name: 'obj_wall_clock',   h: 0.05, aspect: 0.75, x:  0.085, y:  0.012, z: -0.48 },
-  { name: 'obj_framed_photo', h: 0.03, aspect: 1.33, x: -0.085, y:  0.045, z: -0.46 },
-  { name: 'obj_curtain_left', h: 0.28, aspect: 0.57, x: -0.080, y:  0.010, z: -0.42 },
-  { name: 'curtain_right',    h: 0.28, aspect: 0.57, x:  0.080, y:  0.010, z: -0.40 },
-  { name: 'obj_floor_lamp',   h: 0.16, aspect: 0.40, x: -0.060, y:  0.000, z: -0.35 },
-  { name: 'obj_plant',        h: 0.06, aspect: 0.75, x:  0.070, y: -0.040, z: -0.30 },
-  { name: 'obj_throw_pillow', h: 0.03, aspect: 1.00, x:  0.020, y: -0.028, z: -0.24 },
-  { name: 'obj_teapot',       h: 0.04, aspect: 1.00, x: -0.020, y: -0.052, z: -0.22 },
-  { name: 'obj_teacup',       h: 0.025, aspect: 1.00, x:  0.010, y: -0.050, z: -0.20 },
-  { name: 'obj_books_stack',  h: 0.025, aspect: 1.20, x: -0.050, y: -0.030, z: -0.18 },
-  { name: 'obj_flower_vase',  h: 0.04, aspect: 0.67, x:  0.050, y: -0.020, z: -0.16 },
-  { name: 'obj_candle',       h: 0.04, aspect: 0.50, x:  0.030, y: -0.050, z: -0.14 },
-  { name: 'obj_teddy_bear',   h: 0.06, aspect: 0.75, x: -0.010, y: -0.040, z: -0.12 },
-  { name: 'cat',              h: 0.08, aspect: 1.00, x:  0.000, y: -0.050, z: -0.10 },
+  { name: 'wimmel_bg',        h: 0.80,  aspect: 0.67, x:  0.000, y:  0.000, z: -0.28 },
+  { name: 'obj_rug',          h: 0.03,  aspect: 1.60, x: -0.010, y: -0.058, z: -0.25 },
+  { name: 'obj_wall_clock',   h: 0.05,  aspect: 0.75, x:  0.085, y:  0.012, z: -0.24 },
+  { name: 'obj_framed_photo', h: 0.03,  aspect: 1.33, x: -0.085, y:  0.045, z: -0.23 },
+  { name: 'obj_curtain_left', h: 0.28,  aspect: 0.57, x: -0.080, y:  0.010, z: -0.21 },
+  { name: 'curtain_right',    h: 0.28,  aspect: 0.57, x:  0.080, y:  0.010, z: -0.20 },
+  { name: 'obj_floor_lamp',   h: 0.16,  aspect: 0.40, x: -0.060, y:  0.000, z: -0.18 },
+  { name: 'obj_plant',        h: 0.06,  aspect: 0.75, x:  0.070, y: -0.040, z: -0.15 },
+  { name: 'obj_throw_pillow', h: 0.03,  aspect: 1.00, x:  0.020, y: -0.028, z: -0.12 },
+  { name: 'obj_teapot',       h: 0.04,  aspect: 1.00, x: -0.020, y: -0.052, z: -0.11 },
+  { name: 'obj_teacup',       h: 0.025, aspect: 1.00, x:  0.010, y: -0.050, z: -0.10 },
+  { name: 'obj_books_stack',  h: 0.025, aspect: 1.20, x: -0.050, y: -0.030, z: -0.09 },
+  { name: 'obj_flower_vase',  h: 0.04,  aspect: 0.67, x:  0.050, y: -0.020, z: -0.08 },
+  { name: 'obj_candle',       h: 0.04,  aspect: 0.50, x:  0.030, y: -0.050, z: -0.07 },
+  { name: 'cat',              h: 0.08,  aspect: 1.00, x:  0.000, y: -0.050, z: -0.06 },
+  { name: 'obj_teddy_bear',   h: 0.06,  aspect: 0.75, x: -0.010, y: -0.040, z: -0.05 },
 ];
 
 const FAR = 10.0;
