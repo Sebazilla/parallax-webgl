@@ -69,21 +69,21 @@ const CAT_H = 0.028;
 // different rates. All sit behind the cats (z < -0.024) so they never occlude cats.
 const DECOR = [
   // Wide rug along the floor, far back.
-  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.028 },
+  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.030 },
   // Floor lamp standing on the far left.
-  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.025 },
+  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.030 },
   // Potted plant in the right corner.
-  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.025 },
+  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.030 },
   // Wall clock, high on the back wall.
-  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.027 },
+  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.030 },
   // Flower vase on a shelf upper-left.
-  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.024 },
+  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.030 },
   // Teapot on a low table, left-centre.
-  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.023 },
+  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.030 },
   // Teacup next to teapot.
-  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.022 },
+  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.030 },
   // Candle to the right of the teapot.
-  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.023 },
+  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.030 },
 ];
 
 const FAR = 10.0;
