@@ -1,13 +1,11 @@
 // Head-tracked parallax Wimmelbild "Find the Cat" in the browser.
 //
-// Flow:
-//   tap -> getUserMedia (front camera) -> MediaPipe FaceLandmarker
-//   -> face position in camera frame -> off-axis projection -> Three.js render
-//
-// Coordinate convention (scene space, meters):
-//   +X right (user's perspective), +Y up, +Z toward user.
-//   Screen plane at z=0, centered at (0, -cameraToScreenCenterY, 0).
-//   Diorama content at z < 0.
+// Hiding mechanic:
+//   Each hider has a known OPAQUE SILHOUETTE inside its PNG (bbox of alpha>128).
+//   The cat is placed at the silhouette's CENTER IN WORLD SPACE, at deeper z.
+//   Hiders sit very close to the screen plane; cats sit far behind.
+//   This makes the cat barely parallax-shift while the hider barely moves,
+//   so the cat peeks out from behind the silhouette edges as the user tilts their head.
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
 import {
@@ -15,8 +13,7 @@ import {
   FilesetResolver,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9/vision_bundle.mjs';
 
-// ---- Device geometry (meters). Canvas dimensions derived from CSS pixels.
-// iPhone 16 Plus: 1 CSS px ≈ 0.181 mm. Camera lens sits roughly 20 mm above canvas top.
+// ---- Device geometry (meters). Canvas derived from CSS px.
 const CSS_PX_TO_M = 0.000181;
 const CAMERA_ABOVE_CANVAS_TOP = 0.020;
 
@@ -34,31 +31,42 @@ function updateGeometry() {
 const IOD_METERS = 0.063;
 const CAMERA_HFOV_DEG = 70;
 
-// ---- Scene composition: BG plane + 5 foreground hiders.
-// Scale is tuned so BG visibly fills the frame with generous overflow margin for
-// head-tilt VR feel; hiders are substantial and close-to-screen to feel "in the room";
-// cats hide one behind each hider (deeper z + matched XY).
-const BG = { name: 'wimmel_bg', h: 0.30, aspect: 0.67, x: 0.000, y: 0.000, z: -0.100 };
+// ---- Scene composition.
+// BG sits far back, so tilting the head pans it like a VR window.
+// Hiders sit very close to the screen plane (z ≈ -0.015) — they stay nearly
+// fixed on screen as the head moves. Cats sit behind them (z ≈ -0.15), so they
+// parallax-shift more and peek out around the hider silhouettes.
+const BG = { name: 'wimmel_bg', h: 0.380, aspect: 0.67, x: 0, y: 0.005, z: -0.200 };
 
+// Each hider has:
+//   name, h, aspect → geometry size (meters).
+//   x, y           → mesh center in world (relative to screen center Y).
+//   z              → depth.
+//   mirror         → flip U (texture) so opaque silhouette appears on opposite side.
+//   silX, silY     → opaque-silhouette centre in PNG coords, 0..1 (as seen by user,
+//                    i.e. AFTER mirroring if mirror is true).
+// Cat for this hider is placed at:
+//   cat.x = hider.x + (silX - 0.5) * (h * aspect)
+//   cat.y = hider.y + (0.5 - silY) * h
+const HIDER_Z = -0.015;
+const CAT_Z   = -0.150;
+const CAT_H   = 0.038;   // visible cat height
 const HIDERS = [
-  { name: 'obj_curtain_left', h: 0.220, aspect: 0.35, x: -0.040, y:  0.028, z: -0.055 },
-  { name: 'curtain_right',    h: 0.220, aspect: 0.35, x:  0.040, y:  0.028, z: -0.055 },
-  { name: 'obj_floor_lamp',   h: 0.130, aspect: 0.40, x: -0.050, y: -0.005, z: -0.048 },
-  { name: 'obj_plant',        h: 0.075, aspect: 0.75, x:  0.048, y: -0.052, z: -0.040 },
-  { name: 'obj_teddy_bear',   h: 0.060, aspect: 0.75, x:  0.012, y: -0.065, z: -0.032 },
-];
-
-// Each cat sits behind ONE hider (deeper z, matched XY). Cat renderOrder is below
-// its hider's so the hider paints over it — cat only becomes visible through
-// parallax when the user tilts their head.
-const CAT_H = 0.028;
-const CAT_OFFSET_Z = -0.025; // cat sits this much deeper than its hider
-const CATS_TEMPLATE = [
-  { dx: -0.010, dy:  0.000, hideIdx: 0 }, // behind curtain_left
-  { dx:  0.010, dy:  0.000, hideIdx: 1 }, // behind curtain_right
-  { dx:  0.018, dy: -0.020, hideIdx: 2 }, // behind floor lamp
-  { dx: -0.010, dy:  0.000, hideIdx: 3 }, // behind plant
-  { dx:  0.000, dy: -0.005, hideIdx: 4 }, // behind teddy bear
+  // curtain_left (as-is) — fabric on left half of PNG
+  { name: 'obj_curtain_left', h: 0.210, aspect: 0.40, x: -0.042, y: 0.020, z: HIDER_Z,
+    mirror: false, silX: 0.27, silY: 0.46 },
+  // curtain_right (source PNG has fabric on left too — mirror it so fabric is on right)
+  { name: 'curtain_right',    h: 0.210, aspect: 0.40, x:  0.042, y: 0.020, z: HIDER_Z,
+    mirror: true,  silX: 0.72, silY: 0.43 },
+  // teddy bear — compact plush, opaque in the body/head area
+  { name: 'obj_teddy_bear',   h: 0.075, aspect: 0.75, x:  0.000, y: -0.060, z: HIDER_Z - 0.003,
+    mirror: false, silX: 0.58, silY: 0.68 },
+  // books stack — wide, blocky
+  { name: 'obj_books_stack',  h: 0.055, aspect: 1.20, x: -0.028, y: -0.010, z: HIDER_Z - 0.005,
+    mirror: false, silX: 0.53, silY: 0.48 },
+  // throw pillow — round, fills well
+  { name: 'obj_throw_pillow', h: 0.065, aspect: 1.00, x:  0.030, y: -0.030, z: HIDER_Z - 0.008,
+    mirror: false, silX: 0.50, silY: 0.60 },
 ];
 
 const FAR = 10.0;
@@ -92,11 +100,16 @@ camera.matrixAutoUpdate = true;
 
 const loader = new THREE.TextureLoader();
 
-function makeLayer({ name, h, aspect, x, y, z }, renderOrder, writesDepth = false) {
+function makeLayer({ name, h, aspect, x, y, z, mirror }, renderOrder, writesDepth = false) {
   const geom = new THREE.PlaneGeometry(h * aspect, h);
   const tex = loader.load(`./assets/${name}.png`);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  if (mirror) {
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.repeat.x = -1;
+    tex.offset.x = 1;
+  }
   const mat = new THREE.MeshBasicMaterial({
     map: tex,
     transparent: true,
@@ -115,12 +128,9 @@ function makeLayer({ name, h, aspect, x, y, z }, renderOrder, writesDepth = fals
 const bgMesh = makeLayer(BG, 0, /* writesDepth */ true);
 scene.add(bgMesh);
 
-// Hiders at renderOrder 20, 40, 60, ..., leaving gaps for cats at 15, 35, 55, ...
-const hiderMeshes = [];
-for (let i = 0; i < HIDERS.length; i++) {
-  const m = makeLayer(HIDERS[i], 20 + i * 20, false);
-  scene.add(m);
-  hiderMeshes.push(m);
+// Cats render at 10, Hiders at 20. Hiders always paint on top of cats.
+for (const h of HIDERS) {
+  scene.add(makeLayer(h, 20, false));
 }
 
 // ---- Cat spawning (re-callable for next level)
@@ -134,20 +144,42 @@ function spawnCats() {
   }
   catMeshes = [];
 
-  for (let i = 0; i < CATS_TEMPLATE.length; i++) {
-    const t = CATS_TEMPLATE[i];
-    const hider = HIDERS[t.hideIdx];
-    const hiderOrder = 20 + t.hideIdx * 20;
+  for (let i = 0; i < HIDERS.length; i++) {
+    const h = HIDERS[i];
+    // World position of hider's opaque silhouette centre, projected onto the cat's z-plane.
+    // We anchor cat at the silhouette centre in hider's plane, then place deeper.
+    // Because the cat is deeper, when the user is on-axis the cat visually shifts toward
+    // the origin (x=0) relative to its world x. We compensate by placing the cat slightly
+    // further from centre so its on-screen position at rest aligns with the silhouette.
+    const mesh_w = h.h * h.aspect;
+    const mesh_h = h.h;
+    const silOffX = (h.silX - 0.5) * mesh_w;
+    const silOffY = (0.5 - h.silY) * mesh_h;
+
+    // On-screen x of the silhouette (at eye=(0,0,0.30)):
+    //   screen_x = (hider.x + silOffX) * 0.30 / (0.30 - hider.z)
+    // On-screen x of cat:
+    //   screen_x_cat = cat.x * 0.30 / (0.30 - cat.z)
+    // Solve for cat.x so they match at rest (eye.x=0, eye.y=0, ez=0.30):
+    const ez = 0.30;
+    const zRatioHider = ez / (ez - h.z);
+    const zRatioCat   = ez / (ez - CAT_Z);
+    const screenX = (h.x + silOffX) * zRatioHider;
+    const screenY = (-CAMERA_TO_SCREEN_CENTER_Y + h.y + silOffY) * zRatioHider;
+    const catWorldX = screenX / zRatioCat;
+    const catWorldY = screenY / zRatioCat;
+    const catLocalY = catWorldY + CAMERA_TO_SCREEN_CENTER_Y;
+
     const mesh = makeLayer(
       {
         name: 'cat',
         h: CAT_H,
         aspect: 1.0,
-        x: hider.x + t.dx,
-        y: hider.y + t.dy,
-        z: hider.z + CAT_OFFSET_Z,
+        x: catWorldX,
+        y: catLocalY,
+        z: CAT_Z,
       },
-      hiderOrder - 5,
+      10,
       false,
     );
     mesh.userData.catId = i;
@@ -285,7 +317,7 @@ let level = 1;
 let foundCount = 0;
 
 function updateCounter() {
-  counterEl.textContent = `Level ${level}  •  ${foundCount} / ${CATS_TEMPLATE.length}`;
+  counterEl.textContent = `Level ${level}  •  ${foundCount} / ${HIDERS.length}`;
 }
 
 function showToast(text, duration = 1200) {
@@ -301,7 +333,7 @@ function onCatFound(mesh) {
   mesh.visible = false;
   foundCount += 1;
   updateCounter();
-  if (foundCount >= CATS_TEMPLATE.length) {
+  if (foundCount >= HIDERS.length) {
     showToast(`Level ${level} geschafft! 🎉`, 1600);
     setTimeout(() => {
       level += 1;
