@@ -36,7 +36,7 @@ const CAMERA_HFOV_DEG = 70;
 // slightly different depth so they don't all move in lockstep. Each cat sits
 // 15–20 mm behind its hider, so as the head moves, cat shifts a little more on
 // screen than the hider and peeks out.
-const BG = { name: 'wimmel_bg', h: 0.220, aspect: 0.67, x: 0, y: 0.005, z: -0.055 };
+const BG = { name: 'wimmel_bg', h: 0.220, aspect: 0.67, x: 0, y: 0.005, z: -0.030 };
 
 // HIDERS — each: name, h, aspect, x, y, z, optional mirror.
 // silX/silY: center of opaque silhouette in PNG coords (AFTER mirror).
@@ -44,24 +44,24 @@ const BG = { name: 'wimmel_bg', h: 0.220, aspect: 0.67, x: 0, y: 0.005, z: -0.05
 // peeks out of the silhouette. +Y = ear/head above. -Y = tail/back below. ±X = side peek.
 const HIDERS = [
   // Long fabric on left window edge. Cat tucked at curtain bottom, tail peeks right.
-  { name: 'obj_curtain_left', h: 0.175, aspect: 0.40, x: -0.040, y:  0.000, z: -0.018,
+  { name: 'obj_curtain_left', h: 0.175, aspect: 0.40, x: -0.040, y:  0.000, z: -0.020,
     silX: 0.27, silY: 0.46, peekX:  0.010, peekY: -0.018 },
   // Framed photo on the wall (upper-right). Cat head peeks above the frame.
-  { name: 'obj_framed_photo', h: 0.045, aspect: 1.33, x:  0.028, y:  0.030, z: -0.014,
+  { name: 'obj_framed_photo', h: 0.045, aspect: 1.33, x:  0.028, y:  0.030, z: -0.017,
     silX: 0.48, silY: 0.52, peekX:  0.000, peekY:  0.014 },
   // Throw pillow on sofa (middle-left cushion). Cat ears peek above pillow.
-  { name: 'obj_throw_pillow', h: 0.048, aspect: 1.00, x: -0.018, y: -0.032, z: -0.012,
+  { name: 'obj_throw_pillow', h: 0.048, aspect: 1.00, x: -0.018, y: -0.032, z: -0.016,
     silX: 0.50, silY: 0.60, peekX: -0.004, peekY:  0.013 },
   // Teddy on rug (bottom centre). Cat peeks from behind teddy, to the right.
-  { name: 'obj_teddy_bear',   h: 0.058, aspect: 0.75, x:  0.010, y: -0.070, z: -0.010,
+  { name: 'obj_teddy_bear',   h: 0.058, aspect: 0.75, x:  0.010, y: -0.070, z: -0.015,
     silX: 0.58, silY: 0.68, peekX:  0.013, peekY: -0.002 },
   // Books stack on side table (right side). Cat tail peeks out below books.
-  { name: 'obj_books_stack',  h: 0.040, aspect: 1.20, x:  0.035, y: -0.042, z: -0.016,
+  { name: 'obj_books_stack',  h: 0.040, aspect: 1.20, x:  0.035, y: -0.042, z: -0.018,
     silX: 0.53, silY: 0.48, peekX:  0.008, peekY: -0.012 },
 ];
 
 // Each cat sits at a slightly different depth for varied parallax.
-const CAT_DEPTH_OFFSETS = [-0.020, -0.016, -0.018, -0.022, -0.014]; // added to hider z
+const CAT_DEPTH_OFFSETS = [-0.005, -0.004, -0.005, -0.006, -0.004]; // cat sits just behind hider
 const CAT_H = 0.028;
 
 // DECOR — purely visual props. No cat hides behind them; they exist to fill the
@@ -69,21 +69,21 @@ const CAT_H = 0.028;
 // different rates. All sit behind the cats (z < -0.024) so they never occlude cats.
 const DECOR = [
   // Wide rug along the floor, far back.
-  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.050 },
+  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.028 },
   // Floor lamp standing on the far left.
-  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.043 },
+  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.025 },
   // Potted plant in the right corner.
-  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.040 },
+  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.025 },
   // Wall clock, high on the back wall.
-  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.048 },
+  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.027 },
   // Flower vase on a shelf upper-left.
-  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.038 },
+  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.024 },
   // Teapot on a low table, left-centre.
-  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.032 },
+  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.023 },
   // Teacup next to teapot.
-  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.028 },
+  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.022 },
   // Candle to the right of the teapot.
-  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.030 },
+  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.023 },
 ];
 
 const FAR = 10.0;
