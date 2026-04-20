@@ -1,11 +1,11 @@
 // Fish-tank-VR hidden-object scene.
 //
-// Everything is 3D: walls, floor, ceiling, shelf, and the 7 GLB items on it.
-// No flat background plane — that's what made the previous version feel
-// like objects floating in front of a painting.
-//
 // Camera tracks the user's head via MediaPipe FaceLandmarker and renders
-// with off-axis projection so the screen becomes a window into the diorama.
+// with off-axis projection so the screen acts as a window into a real
+// 3D room. The room is populated with many 3D fixtures (side table,
+// lamp, books, plant, sconce, rug) so when the camera moves the fixtures
+// parallax naturally and the 7 hidden items feel like they sit IN the
+// room, not floating in front of a painting.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -15,70 +15,83 @@ import {
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/vision_bundle.mjs';
 
 // ---- Physical geometry (metres).
-//
-// Screen rectangle lives in the world at z=0, centred on the X axis.
-// iPhone 16 Plus portrait: 77 mm × 160 mm. Front camera sits above the
-// screen, offset +Y from screen centre by cameraToScreenCenterY.
+// iPhone 16 Plus portrait: 77 × 160 mm, front cam offset +86 mm from screen
+// centre. These values drift slightly across iPhone models but the illusion
+// is robust within ±10 % error.
 const SCREEN_W = 0.077;
 const SCREEN_H = 0.160;
 const CAMERA_TO_SCREEN_CENTER_Y = 0.086;
 
-// Room extends behind the screen (negative Z). Wider and taller than the
-// screen so edges stay filled as the head moves.
+// World room. Larger than screen so walls stay off-screen edges during head
+// movement. Scale is roughly "doll house" — 60 cm wide, 50 cm tall, 60 cm
+// deep — which reads as a believable small room from arm's length.
 const ROOM = {
-  w: 0.28,   // wall-to-wall X
-  h: 0.34,   // floor-to-ceiling Y
-  d: 0.34,   // screen-plane to back wall Z (from 0 to -ROOM.d)
+  w: 0.60,
+  h: 0.50,
+  d: 0.60,
 };
 
-// Shelf plank jutting out from the back wall.
+// Wall-mounted shelf at back wall.
 const SHELF = {
-  y: -0.045,           // top surface Y (slightly below screen centre)
+  y: 0.02,
   zBack: -ROOM.d + 0.005,
-  zFront: -0.08,       // how far toward the viewer the shelf reaches
+  zFront: -ROOM.d + 0.11,
   thickness: 0.014,
 };
 
-// Default head position when face tracking has no data yet.
+// Side table in the room.
+const TABLE = {
+  w: 0.18,
+  h: 0.18,          // height above floor
+  d: 0.14,
+  x: 0.18,          // right side
+  z: -ROOM.d + 0.16,
+  legThickness: 0.012,
+};
+const TABLE_TOP_Y = -ROOM.h / 2 + TABLE.h;
+
+// Default viewer position (fallback when face tracking off).
 const DEFAULT_HEAD = new THREE.Vector3(0, 0, 0.35);
 
-// ---- Items. Positions are metres in world-space on the shelf top.
-// x: -ROOM.w/2..+ROOM.w/2, z: ~-ROOM.d..SHELF.zFront.
-// sizeWorld is target maximum dimension in metres.
+// Parallax gain. Damps head motion relative to the raw MediaPipe estimate
+// so objects don't fly when the pinhole model overshoots. Override via
+// ?gain=0.8 in the URL.
+const GAIN = Math.max(0.0, Math.min(2.0,
+  parseFloat(new URLSearchParams(location.search).get('gain') || '0.5')));
+
+// ---- Items. Each is placed on a real surface in the room.
+// surface: 'shelf' | 'table' | 'floor' | 'books' | 'rug'
 const ITEMS = [
-  { name: 'chess_queen',      sizeWorld: 0.075, x: -0.095, z: -0.28, rotY:  0.3 },
-  { name: 'pocket_watch',     sizeWorld: 0.032, x: -0.035, z: -0.14, rotY:  0.2, rotZ: -0.1 },
-  { name: 'plush_mouse',      sizeWorld: 0.045, x:  0.050, z: -0.19, rotY: -0.4 },
-  { name: 'skeleton_key',     sizeWorld: 0.060, x:  0.100, z: -0.11, rotY: -0.2, rotZ: -0.2 },
-  { name: 'magnifying_glass', sizeWorld: 0.070, x: -0.075, z: -0.12, rotY:  0.3, rotZ:  0.4 },
-  { name: 'eyeglasses',       sizeWorld: 0.060, x:  0.010, z: -0.24, rotY:  0.05 },
-  { name: 'fountain_pen',     sizeWorld: 0.085, x:  0.090, z: -0.26, rotY:  0.5, rotZ:  0.2 },
+  { name: 'chess_queen',      sizeWorld: 0.08, surface: 'table', x:  0.00, z:  0.00, rotY:  0.3 },
+  { name: 'pocket_watch',     sizeWorld: 0.04, surface: 'shelf', x: -0.10, z:  0.03, rotY:  0.2, rotZ: -0.1 },
+  { name: 'plush_mouse',      sizeWorld: 0.07, surface: 'rug',   x: -0.08, z: -0.38, rotY: -0.4 },
+  { name: 'skeleton_key',     sizeWorld: 0.08, surface: 'shelf', x:  0.08, z:  0.02, rotY: -0.2, rotZ: -0.2 },
+  { name: 'magnifying_glass', sizeWorld: 0.09, surface: 'rug',   x:  0.11, z: -0.20, rotY:  0.3, rotZ:  0.4 },
+  { name: 'eyeglasses',       sizeWorld: 0.08, surface: 'table', x: -0.05, z:  0.03, rotY:  0.05 },
+  { name: 'fountain_pen',     sizeWorld: 0.12, surface: 'books', x:  0.00, z:  0.00, rotY:  0.5, rotZ:  0.6 },
 ];
 
 // ---- DOM
-const canvas = document.getElementById('scene');
-const startEl = document.getElementById('start');
-const startBtn = document.getElementById('startBtn');
-const toast = document.getElementById('toast');
-const counterEl = document.getElementById('counter');
-const video = document.getElementById('cam');
+const canvas     = document.getElementById('scene');
+const startEl    = document.getElementById('start');
+const startBtn   = document.getElementById('startBtn');
+const toast      = document.getElementById('toast');
+const counterEl  = document.getElementById('counter');
+const video      = document.getElementById('cam');
+const hudEl      = document.getElementById('hud');
 
-// ---- Three.js boilerplate
+// ---- Three.js
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
 renderer.setClearColor(0x0a0806, 1);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x1a140c, 0.5, 1.2);
 
-// Off-axis camera. We override its projection matrix every frame from the
-// head position, so fov/aspect/near/far on the constructor are placeholders.
-const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 10);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 20);
 camera.rotation.set(0, 0, 0);
-camera.matrixAutoUpdate = true;
 
-// ---- Canvas-generated textures
+// ---- Procedural textures
 function makeNoiseTexture(baseR, baseG, baseB, amplitude = 12, size = 256) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -128,6 +141,48 @@ function makeWoodTexture(size = 512) {
   return t;
 }
 
+function makeRugTexture(size = 256) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#8a4a3a';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 60; i++) {
+    ctx.strokeStyle = i % 4 < 2 ? '#6e3a2e' : '#a55a48';
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 2 + Math.random() * 3;
+    ctx.beginPath();
+    ctx.moveTo(0, i * size / 60);
+    ctx.lineTo(size, i * size / 60);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = '#c4856a';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(12, 12, size - 24, size - 24);
+  ctx.globalAlpha = 1;
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function makeBookSpineTexture(color, title = '') {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 64, 256);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(0, 0, 4, 256);
+  ctx.fillRect(60, 0, 4, 256);
+  ctx.fillStyle = '#d4a45a';
+  ctx.fillRect(14, 40, 36, 4);
+  ctx.fillRect(14, 212, 36, 4);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 function makeShadowTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
@@ -149,18 +204,27 @@ const TEX = {
   ceiling:  makeNoiseTexture(196, 168, 128, 8),
   floor:    makeWoodTexture(),
   shelf:    makeWoodTexture(),
+  rug:      makeRugTexture(),
   shadow:   makeShadowTexture(),
 };
-TEX.floor.repeat.set(2, 3);
-TEX.shelf.repeat.set(1, 1);
-TEX.wallBack.repeat.set(2, 2);
-TEX.wallSide.repeat.set(2, 2);
+TEX.floor.repeat.set(3, 3);
+TEX.wallBack.repeat.set(3, 3);
+TEX.wallSide.repeat.set(3, 3);
+
+// ---- Materials
+const matWoodDark = new THREE.MeshStandardMaterial({ map: makeWoodTexture(), roughness: 0.6 });
+const matBrass    = new THREE.MeshStandardMaterial({ color: 0xb08b4a, metalness: 0.8, roughness: 0.35 });
+const matCreamShade = new THREE.MeshStandardMaterial({ color: 0xf4e4b8, roughness: 0.9, emissive: 0x402a10, emissiveIntensity: 0.35 });
+const matTerracotta = new THREE.MeshStandardMaterial({ color: 0xa2553a, roughness: 0.85 });
+const matLeaf     = new THREE.MeshStandardMaterial({ color: 0x4a6e3a, roughness: 0.8 });
 
 // ---- Room geometry
-function addRoom() {
-  const halfW = ROOM.w / 2;
-  const halfH = ROOM.h / 2;
-  const back   = new THREE.Mesh(
+const halfW = ROOM.w / 2;
+const halfH = ROOM.h / 2;
+
+function buildRoom() {
+  // Walls as inward-facing planes.
+  const back = new THREE.Mesh(
     new THREE.PlaneGeometry(ROOM.w, ROOM.h),
     new THREE.MeshStandardMaterial({ map: TEX.wallBack, roughness: 0.95 }),
   );
@@ -199,67 +263,227 @@ function addRoom() {
   ceiling.rotation.x = Math.PI / 2;
   scene.add(ceiling);
 
-  // Painting on back wall: a tiny framed print of Astrid's approved
-  // wimmel artwork. Keeps visual continuity with the painted-scene version
-  // without being the whole backdrop.
-  const paintingTex = new THREE.TextureLoader().load('./assets/wimmel_bg_v3.png');
-  paintingTex.colorSpace = THREE.SRGBColorSpace;
-  const painting = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.07, 0.105),
-    new THREE.MeshStandardMaterial({ map: paintingTex, roughness: 0.8 }),
-  );
-  painting.position.set(-0.05, 0.085, -ROOM.d + 0.001);
-  scene.add(painting);
-  const paintingFrame = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.082, 0.117),
-    new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.6 }),
-  );
-  paintingFrame.position.set(-0.05, 0.085, -ROOM.d + 0.0005);
-  scene.add(paintingFrame);
+  // Crown molding at ceiling — thin bars of box geometry. Gives strong
+  // parallax cue on the ceiling corner.
+  const crownMat = new THREE.MeshStandardMaterial({ color: 0x6e4a2a, roughness: 0.6 });
+  for (const [w, h, d, x, y, z] of [
+    [ROOM.w, 0.012, 0.012, 0, halfH - 0.006, -ROOM.d + 0.006],
+    [0.012, 0.012, ROOM.d, -halfW + 0.006, halfH - 0.006, -ROOM.d / 2],
+    [0.012, 0.012, ROOM.d,  halfW - 0.006, halfH - 0.006, -ROOM.d / 2],
+  ]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), crownMat);
+    m.position.set(x, y, z);
+    scene.add(m);
+  }
+  // Floor skirting.
+  for (const [w, h, d, x, y, z] of [
+    [ROOM.w, 0.018, 0.012, 0, -halfH + 0.009, -ROOM.d + 0.006],
+    [0.012, 0.018, ROOM.d, -halfW + 0.006, -halfH + 0.009, -ROOM.d / 2],
+    [0.012, 0.018, ROOM.d,  halfW - 0.006, -halfH + 0.009, -ROOM.d / 2],
+  ]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), crownMat);
+    m.position.set(x, y, z);
+    scene.add(m);
+  }
+}
 
-  // Shelf plank.
+function buildShelf() {
   const shelfDepth = SHELF.zFront - SHELF.zBack;
   const shelfMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(ROOM.w, SHELF.thickness, shelfDepth),
+    new THREE.BoxGeometry(0.34, SHELF.thickness, shelfDepth),
     new THREE.MeshStandardMaterial({ map: TEX.shelf, roughness: 0.7 }),
   );
-  shelfMesh.position.set(0, SHELF.y - SHELF.thickness / 2, (SHELF.zFront + SHELF.zBack) / 2);
+  shelfMesh.position.set(-0.08, SHELF.y - SHELF.thickness / 2, (SHELF.zFront + SHELF.zBack) / 2);
   scene.add(shelfMesh);
 
-  // Shelf brackets (simple boxes).
-  const bracketMat = new THREE.MeshStandardMaterial({ color: 0x2a1d12, roughness: 0.5 });
-  for (const x of [-ROOM.w / 2 + 0.02, ROOM.w / 2 - 0.02]) {
+  // Small brackets.
+  for (const x of [-0.23, 0.07]) {
     const bracket = new THREE.Mesh(
-      new THREE.BoxGeometry(0.006, 0.03, 0.03),
-      bracketMat,
+      new THREE.BoxGeometry(0.006, 0.035, 0.035),
+      new THREE.MeshStandardMaterial({ color: 0x2a1d12 }),
     );
-    bracket.position.set(x, SHELF.y - SHELF.thickness - 0.015, SHELF.zBack + 0.02);
+    bracket.position.set(x, SHELF.y - SHELF.thickness - 0.018, SHELF.zBack + 0.025);
     scene.add(bracket);
   }
 }
 
-addRoom();
+function buildSideTable() {
+  const top = new THREE.Mesh(
+    new THREE.BoxGeometry(TABLE.w, 0.012, TABLE.d),
+    matWoodDark,
+  );
+  top.position.set(TABLE.x, TABLE_TOP_Y, TABLE.z);
+  scene.add(top);
+
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x3a2614, roughness: 0.55 });
+  const legH = TABLE.h - 0.012;
+  const lx = TABLE.w / 2 - TABLE.legThickness;
+  const lz = TABLE.d / 2 - TABLE.legThickness;
+  for (const [dx, dz] of [[-lx, -lz], [lx, -lz], [-lx, lz], [lx, lz]]) {
+    const leg = new THREE.Mesh(
+      new THREE.BoxGeometry(TABLE.legThickness, legH, TABLE.legThickness),
+      legMat,
+    );
+    leg.position.set(TABLE.x + dx, -halfH + legH / 2, TABLE.z + dz);
+    scene.add(leg);
+  }
+}
+
+function buildLamp() {
+  // On the table. Base + pole + shade.
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.032, 0.012, 24),
+    matBrass,
+  );
+  base.position.set(TABLE.x - 0.04, TABLE_TOP_Y + 0.012, TABLE.z - 0.02);
+  scene.add(base);
+
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.004, 0.004, 0.1, 16),
+    matBrass,
+  );
+  pole.position.set(TABLE.x - 0.04, TABLE_TOP_Y + 0.012 + 0.05, TABLE.z - 0.02);
+  scene.add(pole);
+
+  const shade = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.026, 0.04, 0.055, 32, 1, true),
+    matCreamShade,
+  );
+  shade.position.set(TABLE.x - 0.04, TABLE_TOP_Y + 0.013 + 0.1 + 0.028, TABLE.z - 0.02);
+  scene.add(shade);
+
+  // Light inside the shade.
+  const bulb = new THREE.PointLight(0xffcf7a, 0.8, 0.5, 1.8);
+  bulb.position.set(TABLE.x - 0.04, TABLE_TOP_Y + 0.14, TABLE.z - 0.02);
+  scene.add(bulb);
+}
+
+function buildBooks() {
+  // Stack of books in corner of the shelf.
+  const colors = ['#7a2e2a', '#2e4a7a', '#4a7a2e', '#7a5a2e', '#5a2e7a'];
+  let yCursor = SHELF.y;
+  const stackX = -0.20;
+  const stackZ = (SHELF.zFront + SHELF.zBack) / 2 - 0.01;
+  for (let i = 0; i < 5; i++) {
+    const bw = 0.05 + Math.random() * 0.02;
+    const bh = 0.015 + Math.random() * 0.006;
+    const bd = 0.07;
+    const tex = makeBookSpineTexture(colors[i]);
+    const book = new THREE.Mesh(
+      new THREE.BoxGeometry(bw, bh, bd),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75 }),
+    );
+    book.position.set(stackX + (Math.random() - 0.5) * 0.006, yCursor + bh / 2, stackZ);
+    book.rotation.y = (Math.random() - 0.5) * 0.08;
+    scene.add(book);
+    yCursor += bh;
+  }
+  // Expose top of book stack so items can be placed on it.
+  return { topY: yCursor, x: stackX, z: stackZ };
+}
+
+function buildPlant() {
+  const potH = 0.055;
+  const pot = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.038, 0.028, potH, 24),
+    matTerracotta,
+  );
+  pot.position.set(-0.22, -halfH + potH / 2, -0.22);
+  scene.add(pot);
+
+  // Foliage: 3 overlapping spheres of leaves.
+  for (const [dx, dy, dz, r] of [[0, 0.04, 0, 0.06], [0.03, 0.07, 0.01, 0.04], [-0.025, 0.065, -0.015, 0.045]]) {
+    const leaf = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 10),
+      matLeaf,
+    );
+    leaf.position.set(-0.22 + dx, -halfH + potH + dy, -0.22 + dz);
+    scene.add(leaf);
+  }
+}
+
+function buildPainting() {
+  // Small framed wimmel print on back wall, slightly off-centre left.
+  const paintingTex = new THREE.TextureLoader().load('./assets/wimmel_bg_v3.png');
+  paintingTex.colorSpace = THREE.SRGBColorSpace;
+  const frameDepth = 0.012;
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(0.11, 0.16, frameDepth),
+    new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.6 }),
+  );
+  frame.position.set(-0.13, 0.12, -ROOM.d + frameDepth / 2);
+  scene.add(frame);
+  const canvasMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.095, 0.145),
+    new THREE.MeshStandardMaterial({ map: paintingTex, roughness: 0.8 }),
+  );
+  canvasMesh.position.set(-0.13, 0.12, -ROOM.d + frameDepth + 0.001);
+  scene.add(canvasMesh);
+}
+
+function buildRug() {
+  const rug = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.38, 0.26),
+    new THREE.MeshStandardMaterial({ map: TEX.rug, roughness: 0.95 }),
+  );
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(0.02, -halfH + 0.0005, -0.28);
+  scene.add(rug);
+}
+
+function buildSconce() {
+  // Wall-mounted round sconce on right wall for visual punctuation.
+  const back = new THREE.Mesh(
+    new THREE.BoxGeometry(0.006, 0.04, 0.04),
+    new THREE.MeshStandardMaterial({ color: 0x2a1d12 }),
+  );
+  back.position.set(halfW - 0.003, 0.12, -ROOM.d + 0.15);
+  scene.add(back);
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.018, 16, 12),
+    matCreamShade,
+  );
+  bulb.position.set(halfW - 0.025, 0.12, -ROOM.d + 0.15);
+  scene.add(bulb);
+  const sconceLight = new THREE.PointLight(0xffcf7a, 0.5, 0.35, 1.8);
+  sconceLight.position.set(halfW - 0.03, 0.12, -ROOM.d + 0.15);
+  scene.add(sconceLight);
+}
+
+buildRoom();
+buildShelf();
+buildSideTable();
+buildLamp();
+const BOOKS = buildBooks();
+buildPlant();
+buildPainting();
+buildRug();
+buildSconce();
 
 // ---- Lighting
-// Warm key light from upper-left, like a window or sconce.
-scene.add(new THREE.AmbientLight(0xffe8c8, 0.42));
+scene.add(new THREE.AmbientLight(0xffe8c8, 0.35));
 
-const keyLight = new THREE.DirectionalLight(0xffd88a, 1.3);
+const keyLight = new THREE.DirectionalLight(0xffd88a, 0.9);
 keyLight.position.set(-0.3, 0.4, 0.2);
 scene.add(keyLight);
 
-const fillLight = new THREE.DirectionalLight(0x6a8cb8, 0.35);
+const fillLight = new THREE.DirectionalLight(0x6a8cb8, 0.25);
 fillLight.position.set(0.4, -0.1, 0.3);
 scene.add(fillLight);
-
-// Warm point light inside the room as a cozy lamp glow.
-const lamp = new THREE.PointLight(0xffa860, 0.35, 0.5, 2.0);
-lamp.position.set(-0.11, 0.10, -ROOM.d + 0.06);
-scene.add(lamp);
 
 // ---- Items
 const itemObjects = [];
 const gltfLoader = new GLTFLoader();
+
+function surfaceOrigin(surface, x, z) {
+  switch (surface) {
+    case 'shelf': return { x, y: SHELF.y, z: (SHELF.zFront + SHELF.zBack) / 2 + z };
+    case 'table': return { x: TABLE.x + x, y: TABLE_TOP_Y, z: TABLE.z + z };
+    case 'rug':   return { x, y: -halfH + 0.001, z };
+    case 'books': return { x: BOOKS.x, y: BOOKS.topY, z: BOOKS.z };
+    default:      return { x, y: 0, z };
+  }
+}
 
 async function loadItems() {
   const promises = ITEMS.map((item, i) => new Promise((resolve, reject) => {
@@ -272,33 +496,30 @@ async function loadItems() {
         box.getSize(size);
         const center = new THREE.Vector3();
         box.getCenter(center);
-
-        // Re-centre X/Z on origin, bottom on y=0 so we can place by floor y.
         root.position.set(-center.x, -box.min.y, -center.z);
 
         const pivot = new THREE.Group();
         pivot.add(root);
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
-        const scale = item.sizeWorld / maxDim;
-        pivot.scale.setScalar(scale);
+        pivot.scale.setScalar(item.sizeWorld / maxDim);
 
-        // Place on shelf top.
-        pivot.position.set(item.x, SHELF.y, item.z);
+        const pos = surfaceOrigin(item.surface, item.x, item.z);
+        pivot.position.set(pos.x, pos.y, pos.z);
         pivot.rotation.set(item.rotX || 0, item.rotY || 0, item.rotZ || 0);
 
-        // Soft shadow on shelf underneath.
+        // Contact shadow pad on the surface.
         const shadowR = item.sizeWorld * 0.55;
         const shadow = new THREE.Mesh(
           new THREE.CircleGeometry(shadowR, 32),
           new THREE.MeshBasicMaterial({
             map: TEX.shadow,
             transparent: true,
-            opacity: 0.55,
+            opacity: 0.5,
             depthWrite: false,
           }),
         );
         shadow.rotation.x = -Math.PI / 2;
-        shadow.position.set(item.x, SHELF.y + 0.0005, item.z);
+        shadow.position.set(pos.x, pos.y + 0.0006, pos.z);
         scene.add(shadow);
 
         pivot.userData.id = i;
@@ -316,31 +537,24 @@ async function loadItems() {
   await Promise.all(promises);
 }
 
-// ---- Off-axis projection.
-//
-// Head (eye) position is in screen-centred world coords. Screen rectangle
-// is at z=0 spanning (-SCREEN_W/2, -SCREEN_H/2) to (+SCREEN_W/2, +SCREEN_H/2).
-// Camera is placed at head position and faces straight down -Z, but we
-// override its projection matrix so the frustum corners map to the screen
-// corners.
+// ---- Off-axis projection
 const headPos = DEFAULT_HEAD.clone();
 const smoothedHead = DEFAULT_HEAD.clone();
 
 function updateCameraProjection() {
   const near = 0.02;
-  const far = 10.0;
+  const far  = 20.0;
   const ex = smoothedHead.x;
   const ey = smoothedHead.y;
   const ez = Math.max(0.05, smoothedHead.z);
 
-  const halfW = SCREEN_W / 2;
-  const halfH = SCREEN_H / 2;
+  const sw = SCREEN_W / 2;
+  const sh = SCREEN_H / 2;
 
-  // Frustum planes at the near plane, scaled from the screen rectangle.
-  const left   = (-halfW - ex) * near / ez;
-  const right  = ( halfW - ex) * near / ez;
-  const bottom = (-halfH - ey) * near / ez;
-  const top    = ( halfH - ey) * near / ez;
+  const left   = (-sw - ex) * near / ez;
+  const right  = ( sw - ex) * near / ez;
+  const bottom = (-sh - ey) * near / ez;
+  const top    = ( sh - ey) * near / ez;
 
   camera.projectionMatrix.makePerspective(left, right, top, bottom, near, far);
   camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
@@ -354,13 +568,13 @@ let faceLandmarker = null;
 let videoReady = false;
 let lastVideoTime = -1;
 let trackingActive = false;
+let trackingError = '';
 
-// Assumed horizontal FoV of the front camera (typical wide front cam ≈ 65°
-// horizontal). Used for pinhole → metric distance from landmarks.
 const CAM_HFOV_DEG = 65;
 const HUMAN_IPD_M = 0.063;
 
 async function initFaceTracking() {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('no getUserMedia');
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
     audio: false,
@@ -397,7 +611,6 @@ function updateHeadFromFace() {
   const lm = result?.faceLandmarks?.[0];
   if (!lm || lm.length === 0) return;
 
-  // Landmark indices for outer eye corners: 33 (left), 263 (right).
   const L = lm[33];
   const R = lm[263];
   if (!L || !R) return;
@@ -414,34 +627,35 @@ function updateHeadFromFace() {
   const ipdPx = Math.hypot(rxPx - lxPx, ryPx - lyPx);
   if (ipdPx < 1) return;
 
-  // Pinhole: focal in pixels from assumed hFoV on video width.
   const fPx = (vw / 2) / Math.tan((CAM_HFOV_DEG / 2) * Math.PI / 180);
   const zFromCam = HUMAN_IPD_M * fPx / ipdPx;
 
-  // Front camera mirrors the user, so flip X. Y in image grows downward.
   const xFromCam = -(eyeMidX - vw / 2) * zFromCam / fPx;
   const yFromCam = -(eyeMidY - vh / 2) * zFromCam / fPx;
 
-  // Translate from camera frame to screen-centre frame (front cam is above
-  // screen centre by CAMERA_TO_SCREEN_CENTER_Y).
-  const xFromScreen = xFromCam;
-  const yFromScreen = yFromCam + CAMERA_TO_SCREEN_CENTER_Y;
-  const zFromScreen = zFromCam;
+  const xFromScreen = xFromCam * GAIN;
+  const yFromScreen = (yFromCam + CAMERA_TO_SCREEN_CENTER_Y) * GAIN;
 
-  headPos.set(xFromScreen, yFromScreen, zFromScreen);
+  headPos.set(xFromScreen, yFromScreen, zFromCam);
 }
 
-// ---- Resize: keep canvas square-pixel, aspect is handled by off-axis matrix.
+// ---- HUD
+function updateHud() {
+  if (!hudEl) return;
+  const tracking = trackingActive ? 'AN' : (trackingError ? `FEHLER: ${trackingError}` : 'aus');
+  const h = smoothedHead;
+  hudEl.textContent = `Kamera: ${tracking}  x=${h.x.toFixed(3)} y=${h.y.toFixed(3)} z=${h.z.toFixed(3)}  gain=${GAIN}`;
+}
+
+// ---- Resize
 function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  renderer.setSize(w, h, false);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
 }
 resize();
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 
-// ---- Game state
+// ---- Game
 let foundCount = 0;
 
 function updateCounter() {
@@ -462,14 +676,10 @@ function onItemFound(root) {
   if (root.userData.shadow) root.userData.shadow.visible = false;
   foundCount += 1;
   updateCounter();
-  if (foundCount >= ITEMS.length) {
-    showToast('Alle gefunden!', 2400);
-  } else {
-    showToast('Gefunden!');
-  }
+  showToast(foundCount >= ITEMS.length ? 'Alle gefunden!' : 'Gefunden!',
+            foundCount >= ITEMS.length ? 2400 : 1200);
 }
 
-// ---- Tap handler: raycast item groups.
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 
@@ -491,8 +701,7 @@ function handleTap(clientX, clientY) {
 
 canvas.addEventListener('pointerdown', (e) => handleTap(e.clientX, e.clientY), { passive: true });
 
-// ---- Debug keyboard controls: arrow keys move the simulated head on
-// desktop (useful when face tracking is off).
+// Debug keyboard (desktop).
 const debugKeys = { left: false, right: false, up: false, down: false, near: false, far: false };
 window.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft')  debugKeys.left = true;
@@ -512,7 +721,7 @@ window.addEventListener('keyup', (e) => {
 });
 window.__setHead = (x, y, z) => { headPos.set(x, y, z); trackingActive = false; };
 
-// ---- Animation loop
+// ---- Loop
 function renderFrame() {
   if (trackingActive) {
     updateHeadFromFace();
@@ -525,8 +734,9 @@ function renderFrame() {
     if (debugKeys.near)  headPos.z -= step;
     if (debugKeys.far)   headPos.z += step;
   }
-  smoothedHead.lerp(headPos, 0.35);
+  smoothedHead.lerp(headPos, 0.18);
   updateCameraProjection();
+  updateHud();
   renderer.render(scene, camera);
   requestAnimationFrame(renderFrame);
 }
@@ -545,15 +755,16 @@ async function start() {
     return;
   }
 
-  // Face tracking best-effort: if it fails, we still render with default head.
   try {
     await initFaceTracking();
   } catch (err) {
     console.warn('Face tracking unavailable:', err);
+    trackingError = String(err?.message || err).slice(0, 40);
   }
 
   startEl.style.display = 'none';
   counterEl.classList.remove('hidden');
+  if (hudEl) hudEl.classList.remove('hidden');
   updateCounter();
   requestAnimationFrame(renderFrame);
 }
