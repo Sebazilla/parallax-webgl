@@ -57,7 +57,7 @@ const DEFAULT_HEAD = new THREE.Vector3(0, 0, 0.35);
 // so objects don't fly when the pinhole model overshoots. Override via
 // ?gain=0.8 in the URL.
 const GAIN = Math.max(0.0, Math.min(2.0,
-  parseFloat(new URLSearchParams(location.search).get('gain') || '0.5')));
+  parseFloat(new URLSearchParams(location.search).get('gain') || '0.35')));
 
 // ---- Items. Each is placed on a real surface in the room.
 // surface: 'shelf' | 'table' | 'floor' | 'books' | 'rug'
@@ -450,6 +450,249 @@ function buildSconce() {
   scene.add(sconceLight);
 }
 
+// ---- Many-objects clutter pass to reach Wimmelbild density.
+// Mix of procedural 3D primitives and alpha-texture planes using Astrid's
+// approved PNG cutouts. Everything positioned so the 7 hidden items blend
+// in rather than being the only things in the room.
+const PNG = {};
+function pngMat(name) {
+  if (!PNG[name]) {
+    const t = new THREE.TextureLoader().load(`./assets/${name}.png`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    PNG[name] = new THREE.MeshStandardMaterial({
+      map: t,
+      transparent: true,
+      alphaTest: 0.4,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+    });
+  }
+  return PNG[name];
+}
+
+function addCup(x, y, z, color = 0xe8d9b8, r = 0.012, h = 0.016) {
+  const cup = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r * 0.9, h, 20),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.7 }),
+  );
+  cup.position.set(x, y + h / 2, z);
+  scene.add(cup);
+  // thin rim darker
+  const rim = new THREE.Mesh(
+    new THREE.CylinderGeometry(r * 1.02, r * 1.02, 0.002, 20),
+    new THREE.MeshStandardMaterial({ color: 0x555555 }),
+  );
+  rim.position.set(x, y + h, z);
+  scene.add(rim);
+  return cup;
+}
+
+function addCandle(x, y, z, color = 0xe8c890, h = 0.04) {
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.008, 0.008, h, 16),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.85 }),
+  );
+  body.position.set(x, y + h / 2, z);
+  scene.add(body);
+  const flame = new THREE.Mesh(
+    new THREE.ConeGeometry(0.004, 0.01, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffcf60, emissive: 0xff9030, emissiveIntensity: 0.6 }),
+  );
+  flame.position.set(x, y + h + 0.008, z);
+  scene.add(flame);
+}
+
+function addJar(x, y, z, color = 0xa5deff) {
+  const r = 0.014;
+  const h = 0.028;
+  const jar = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r, h, 20),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.3, transparent: true, opacity: 0.7 }),
+  );
+  jar.position.set(x, y + h / 2, z);
+  scene.add(jar);
+  const lid = new THREE.Mesh(
+    new THREE.CylinderGeometry(r * 1.05, r * 1.05, 0.006, 20),
+    new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.6 }),
+  );
+  lid.position.set(x, y + h + 0.003, z);
+  scene.add(lid);
+}
+
+function addBall(x, y, z, color = 0xdd4a3a, r = 0.018) {
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(r, 20, 16),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.7 }),
+  );
+  ball.position.set(x, y + r, z);
+  scene.add(ball);
+}
+
+function addBox(x, y, z, w, h, d, color, rotY = 0) {
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.6 }),
+  );
+  box.position.set(x, y + h / 2, z);
+  box.rotation.y = rotY;
+  scene.add(box);
+  return box;
+}
+
+function addClockOnWall(x, y, z, rotY = 0) {
+  // Small round clock: disc + rim + hands.
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.025, 0.006, 32),
+    new THREE.MeshStandardMaterial({ color: 0xf2ead0, roughness: 0.5 }),
+  );
+  disc.rotation.x = Math.PI / 2;
+  disc.rotation.z = rotY;
+  disc.position.set(x, y, z);
+  scene.add(disc);
+  // hour hand
+  for (const [len, w, angle] of [[0.012, 0.002, 0.3], [0.018, 0.0015, -0.9]]) {
+    const hand = new THREE.Mesh(
+      new THREE.BoxGeometry(w, len, 0.001),
+      new THREE.MeshStandardMaterial({ color: 0x202020 }),
+    );
+    hand.position.set(x + Math.sin(angle) * len / 2, y + Math.cos(angle) * len / 2, z + 0.004);
+    hand.rotation.z = -angle;
+    scene.add(hand);
+  }
+}
+
+function addPngBillboard(name, x, y, z, w, h, rotY = 0) {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    pngMat(name),
+  );
+  mesh.position.set(x, y, z);
+  mesh.rotation.y = rotY;
+  scene.add(mesh);
+  return mesh;
+}
+
+function buildClutter() {
+  const upperY = 0.15;
+
+  // Second shelf higher up on back wall (right side).
+  const upperShelfW = 0.26;
+  const upperShelf = new THREE.Mesh(
+    new THREE.BoxGeometry(upperShelfW, 0.01, 0.08),
+    new THREE.MeshStandardMaterial({ map: TEX.shelf, roughness: 0.7 }),
+  );
+  upperShelf.position.set(0.12, upperY, -ROOM.d + 0.045);
+  scene.add(upperShelf);
+
+  // Upper shelf clutter.
+  addCup(0.03, upperY + 0.005, -ROOM.d + 0.04, 0x8bb0e0, 0.014, 0.018);
+  addCup(0.07, upperY + 0.005, -ROOM.d + 0.04, 0xb8e08b, 0.013, 0.018);
+  addJar(0.12, upperY + 0.005, -ROOM.d + 0.04, 0xbba0e0);
+  addBox(0.17, upperY + 0.005, -ROOM.d + 0.04, 0.025, 0.04, 0.018, 0x7a4a2a);
+  addCandle(0.21, upperY + 0.005, -ROOM.d + 0.04, 0xe8d4a8, 0.05);
+  // Stack of tiny books on upper shelf far left
+  for (let i = 0; i < 4; i++) {
+    addBox(-0.04 + (i % 2) * 0.008, upperY + 0.005 + i * 0.012, -ROOM.d + 0.04,
+      0.02, 0.01, 0.055, [0x7a2e2a, 0x2e4a7a, 0x4a7a2e, 0x7a5a2e][i], (Math.random() - 0.5) * 0.1);
+  }
+
+  // Main shelf clutter — added around the existing book stack and hidden items.
+  const sy = SHELF.y + 0.001;
+  const szMid = (SHELF.zFront + SHELF.zBack) / 2;
+  addCup( 0.03, sy, szMid + 0.01, 0xe08b5a);
+  addCandle(-0.14, sy, szMid + 0.025, 0xd4c8a8, 0.035);
+  addJar(  0.14, sy, szMid - 0.02, 0xe0a0b8);
+  addBox(-0.01, sy, szMid + 0.02, 0.022, 0.03, 0.022, 0x4a2e7a, 0.3);
+  addBall(-0.17, sy, szMid - 0.005, 0x4aa0dd, 0.011);
+
+  // Side table clutter (around the lamp; lamp is at TABLE.x - 0.04).
+  const ty = TABLE_TOP_Y + 0.001;
+  addBox(TABLE.x + 0.04, ty, TABLE.z + 0.035, 0.06, 0.012, 0.045, 0x3a6a4a, -0.2);
+  addCup(TABLE.x + 0.055, ty, TABLE.z - 0.02, 0xdddddd, 0.013, 0.016);
+  addCandle(TABLE.x + 0.05, ty, TABLE.z + 0.01, 0xffcf60, 0.025);
+
+  // Chest of drawers against left wall.
+  const chestW = 0.08, chestH = 0.13, chestD = 0.14;
+  const chestX = -halfW + chestD / 2 + 0.005;
+  const chestZ = -ROOM.d + 0.4;
+  const chestBody = new THREE.Mesh(
+    new THREE.BoxGeometry(chestW, chestH, chestD),
+    new THREE.MeshStandardMaterial({ map: TEX.shelf, roughness: 0.65 }),
+  );
+  // Rotate so it faces into the room (long axis along Z)
+  chestBody.position.set(chestX, -halfH + chestH / 2, chestZ);
+  scene.add(chestBody);
+  // Drawer lines on the front face (facing +X since chest is against left wall)
+  for (let i = 0; i < 3; i++) {
+    const line = new THREE.Mesh(
+      new THREE.BoxGeometry(0.002, 0.002, chestD * 0.85),
+      new THREE.MeshStandardMaterial({ color: 0x1a0f08 }),
+    );
+    line.position.set(chestX + chestW / 2 + 0.001, -halfH + chestH * (i + 1) / 4, chestZ);
+    scene.add(line);
+    // Drawer knob
+    const knob = new THREE.Mesh(
+      new THREE.SphereGeometry(0.004, 12, 10),
+      new THREE.MeshStandardMaterial({ color: 0x8a6a3a, metalness: 0.5, roughness: 0.4 }),
+    );
+    knob.position.set(chestX + chestW / 2 + 0.003, -halfH + chestH * (i + 0.5) / 3, chestZ);
+    scene.add(knob);
+  }
+  // On top of chest
+  addJar(chestX, -halfH + chestH + 0.001, chestZ + 0.04, 0xb8e0c0);
+  addCup(chestX, -halfH + chestH + 0.001, chestZ - 0.03, 0xe0a888);
+  addBox(chestX + 0.01, -halfH + chestH + 0.001, chestZ, 0.03, 0.02, 0.04, 0x3a2a7a);
+
+  // Floor clutter around the rug.
+  addBall(-0.18, -halfH, -0.20, 0xe06a4a, 0.014);
+  addBox(0.20, -halfH, -0.34, 0.04, 0.04, 0.04, 0xc89060, 0.4); // wooden box/crate
+  addBox(0.22, -halfH + 0.04, -0.34, 0.028, 0.028, 0.028, 0x8a4a2a, -0.1); // smaller box on top
+  // Stack of magazines
+  for (let i = 0; i < 3; i++) {
+    addBox(-0.22, -halfH + i * 0.005, -0.05, 0.05, 0.005, 0.06,
+      [0xcc4a3a, 0x3a4acc, 0xcccc3a][i], (Math.random() - 0.5) * 0.2);
+  }
+  // Plush teddy on rug (billboard png for now — thin card, survives small parallax).
+  addPngBillboard('obj_teddy_bear', 0.02, -halfH + 0.04, -0.32, 0.09, 0.09);
+
+  // Wall art on back wall.
+  addPngBillboard('obj_framed_photo', 0.18, 0.08, -ROOM.d + 0.002, 0.08, 0.08);
+  addClockOnWall(0.00, 0.22, -ROOM.d + 0.008);
+  // Small second painting
+  const p2tex = new THREE.TextureLoader().load('./assets/obj_plant.png');
+  p2tex.colorSpace = THREE.SRGBColorSpace;
+  const p2frame = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.08, 0.008),
+    new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.6 }),
+  );
+  p2frame.position.set(0.22, 0.18, -ROOM.d + 0.004);
+  scene.add(p2frame);
+
+  // Right wall: a shelf bracket + another mini plant
+  addPngBillboard('obj_plant', halfW - 0.04, -halfH + 0.07, -0.48, 0.08, 0.13, -Math.PI / 2);
+
+  // Curtain along left wall edge (wide, hanging from ceiling)
+  addPngBillboard('obj_curtain_left', -halfW + 0.001, 0.0, -0.10, 0.24, 0.40, Math.PI / 2);
+
+  // Extra plant pot near the chest
+  const potH2 = 0.04;
+  const pot2 = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.026, 0.02, potH2, 24),
+    matTerracotta,
+  );
+  pot2.position.set(chestX + 0.03, -halfH + potH2 / 2, chestZ - 0.06);
+  scene.add(pot2);
+  for (const [dx, dy, dz, r] of [[0, 0.03, 0, 0.04], [0.02, 0.05, 0, 0.025]]) {
+    const leaf = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 12, 10),
+      matLeaf,
+    );
+    leaf.position.set(chestX + 0.03 + dx, -halfH + potH2 + dy, chestZ - 0.06 + dz);
+    scene.add(leaf);
+  }
+}
+
+
 buildRoom();
 buildShelf();
 buildSideTable();
@@ -459,6 +702,7 @@ buildPlant();
 buildPainting();
 buildRug();
 buildSconce();
+buildClutter();
 
 // ---- Lighting
 scene.add(new THREE.AmbientLight(0xffe8c8, 0.35));
@@ -734,7 +978,7 @@ function renderFrame() {
     if (debugKeys.near)  headPos.z -= step;
     if (debugKeys.far)   headPos.z += step;
   }
-  smoothedHead.lerp(headPos, 0.18);
+  smoothedHead.lerp(headPos, 0.12);
   updateCameraProjection();
   updateHud();
   renderer.render(scene, camera);
