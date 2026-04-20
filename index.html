@@ -22,16 +22,7 @@
       width: 100vw;
       height: 100vh;
     }
-    video {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-    }
-    #start, #hud, #counter, #toast {
+    #start, #counter, #toast {
       position: fixed;
       color: #fff;
       font-family: -apple-system, system-ui, sans-serif;
@@ -70,14 +61,6 @@
       color: #1a1a1a;
       font-weight: 600;
     }
-    #hud {
-      left: 0; right: 0;
-      bottom: 8px;
-      font-size: 10px;
-      opacity: 0.4;
-      letter-spacing: 0.3px;
-    }
-    #hud.hidden { display: none; }
     #counter {
       left: 0; right: 0;
       top: calc(env(safe-area-inset-top, 0) + 12px);
@@ -111,15 +94,13 @@
 </head>
 <body>
   <canvas id="scene"></canvas>
-  <video id="cam" playsinline autoplay muted></video>
   <div id="start">
     <h1>Find the Items</h1>
-    <p>Bewege deinen Kopf und finde die 7 versteckten Objekte.<br>Die Gegenstände sind echte 3D-Objekte — sie drehen sich mit.</p>
+    <p>Finde die 7 versteckten Gegenstände im Bild.<br>Tippe sie einfach an.</p>
     <button id="startBtn">Starten</button>
   </div>
   <div id="counter" class="hidden">0 / 7</div>
   <div id="toast"></div>
-  <div id="hud" class="hidden"></div>
   <script type="importmap">
   {
     "imports": {
