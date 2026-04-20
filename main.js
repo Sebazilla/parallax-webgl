@@ -1,20 +1,17 @@
-// Head-tracked parallax Wimmelbild "Find the Cat" in the browser.
+// Head-tracked 3D Wimmelbild "Find the Items" in the browser.
 //
-// Design goals (from Astrid's feedback):
-//   - Parallax should be very subtle ("ganz leichte Bewegung") — like a hint that
-//     your eyes are slightly lying to you. NOT VR-dramatic.
-//   - Cats should never be fully visible — just an ear, head, or tail poking out.
-//   - Cats sit on plausible surfaces (sofa, rug, shelf), not floating.
-//   - Hiders placed where they'd naturally be (pillow on sofa, photo on wall, etc).
-//   - Multiple distinct depths so different layers move at slightly different rates.
+// Astrid's pivot: items are true 3D meshes (GLB) so they actually rotate as the
+// head moves — no more floating-sticker feel. BG is a flat painted backdrop.
+// 7 items, tap to mark found.
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/loaders/GLTFLoader.js';
 import {
   FaceLandmarker,
   FilesetResolver,
 } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.9/vision_bundle.mjs';
 
-// ---- Device geometry (meters). Canvas derived from CSS px.
+// ---- Device geometry (meters). iPhone 16 Plus front camera above screen.
 const CSS_PX_TO_M = 0.000181;
 const CAMERA_ABOVE_CANVAS_TOP = 0.020;
 
@@ -32,58 +29,19 @@ const IOD_METERS = 0.063;
 const CAMERA_HFOV_DEG = 70;
 
 // ---- Scene composition.
-// Tight z range (~5 cm total spread) keeps parallax subtle. Each hider sits at a
-// slightly different depth so they don't all move in lockstep. Each cat sits
-// 15–20 mm behind its hider, so as the head moves, cat shifts a little more on
-// screen than the hider and peeks out.
-const BG = { name: 'wimmel_bg', h: 0.220, aspect: 0.67, x: 0, y: 0.005, z: -0.030 };
+// BG: flat painted backdrop far back, fills the view.
+const BG = { name: 'wimmel_bg_v3', h: 0.38, aspect: 1024 / 1536, z: -0.28 };
 
-// HIDERS — each: name, h, aspect, x, y, z, optional mirror.
-// silX/silY: center of opaque silhouette in PNG coords (AFTER mirror).
-// peekX/peekY: world-space offset applied to cat position so only ear/head/tail
-// peeks out of the silhouette. +Y = ear/head above. -Y = tail/back below. ±X = side peek.
-const HIDERS = [
-  // Long fabric on left window edge. Cat tucked at curtain bottom, tail peeks right.
-  { name: 'obj_curtain_left', h: 0.175, aspect: 0.40, x: -0.040, y:  0.000, z: -0.020,
-    silX: 0.27, silY: 0.46, peekX:  0.010, peekY: -0.018 },
-  // Framed photo on the wall (upper-right). Cat head peeks above the frame.
-  { name: 'obj_framed_photo', h: 0.045, aspect: 1.33, x:  0.028, y:  0.030, z: -0.017,
-    silX: 0.48, silY: 0.52, peekX:  0.000, peekY:  0.014 },
-  // Throw pillow on sofa (middle-left cushion). Cat ears peek above pillow.
-  { name: 'obj_throw_pillow', h: 0.048, aspect: 1.00, x: -0.018, y: -0.032, z: -0.016,
-    silX: 0.50, silY: 0.60, peekX: -0.004, peekY:  0.013 },
-  // Teddy on rug (bottom centre). Cat peeks from behind teddy, to the right.
-  { name: 'obj_teddy_bear',   h: 0.058, aspect: 0.75, x:  0.010, y: -0.070, z: -0.015,
-    silX: 0.58, silY: 0.68, peekX:  0.013, peekY: -0.002 },
-  // Books stack on side table (right side). Cat tail peeks out below books.
-  { name: 'obj_books_stack',  h: 0.040, aspect: 1.20, x:  0.035, y: -0.042, z: -0.018,
-    silX: 0.53, silY: 0.48, peekX:  0.008, peekY: -0.012 },
-];
-
-// Each cat sits at a slightly different depth for varied parallax.
-const CAT_DEPTH_OFFSETS = [-0.005, -0.004, -0.005, -0.006, -0.004]; // cat sits just behind hider
-const CAT_H = 0.028;
-
-// DECOR — purely visual props. No cat hides behind them; they exist to fill the
-// scene and give more depth layers so different items parallax at slightly
-// different rates. All sit behind the cats (z < -0.024) so they never occlude cats.
-const DECOR = [
-  // Wide rug along the floor, far back.
-  { name: 'obj_rug',         h: 0.030, aspect: 1.60, x:  0.000, y: -0.085, z: -0.030 },
-  // Floor lamp standing on the far left.
-  { name: 'obj_floor_lamp',  h: 0.090, aspect: 0.40, x: -0.055, y: -0.012, z: -0.030 },
-  // Potted plant in the right corner.
-  { name: 'obj_plant',       h: 0.050, aspect: 0.75, x:  0.055, y: -0.055, z: -0.030 },
-  // Wall clock, high on the back wall.
-  { name: 'obj_wall_clock',  h: 0.050, aspect: 0.75, x:  0.000, y:  0.055, z: -0.030 },
-  // Flower vase on a shelf upper-left.
-  { name: 'obj_flower_vase', h: 0.040, aspect: 0.67, x: -0.048, y:  0.045, z: -0.030 },
-  // Teapot on a low table, left-centre.
-  { name: 'obj_teapot',      h: 0.030, aspect: 1.00, x: -0.035, y: -0.055, z: -0.030 },
-  // Teacup next to teapot.
-  { name: 'obj_teacup',      h: 0.020, aspect: 1.00, x: -0.018, y: -0.062, z: -0.030 },
-  // Candle to the right of the teapot.
-  { name: 'obj_candle',      h: 0.028, aspect: 0.50, x:  0.020, y: -0.055, z: -0.030 },
+// Items: 3D GLB meshes in front of BG. size = world-space longest-axis length.
+// Spread across scene and across depth so head movement reveals different sides.
+const ITEMS = [
+  { name: 'pocket_watch',     size: 0.032, x: -0.022, y: -0.018, z: -0.14, rotY:  0.3 },
+  { name: 'skeleton_key',     size: 0.040, x:  0.020, y:  0.010, z: -0.17, rotY: -0.4, rotZ: -0.3 },
+  { name: 'magnifying_glass', size: 0.050, x:  0.038, y: -0.045, z: -0.12, rotY:  0.5, rotZ: 0.4 },
+  { name: 'eyeglasses',       size: 0.044, x: -0.032, y: -0.060, z: -0.13, rotY:  0.1, rotZ: -0.1 },
+  { name: 'chess_queen',      size: 0.042, x: -0.045, y:  0.030, z: -0.16, rotY: -0.2 },
+  { name: 'fountain_pen',     size: 0.048, x:  0.005, y:  0.055, z: -0.19, rotY:  0.6, rotZ: 0.4 },
+  { name: 'plush_mouse',      size: 0.034, x:  0.028, y: -0.070, z: -0.10, rotY: -0.5 },
 ];
 
 const FAR = 10.0;
@@ -102,6 +60,7 @@ const counterEl = document.getElementById('counter');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
 renderer.setClearColor(0x000000, 1);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 resize();
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
@@ -115,95 +74,72 @@ const scene = new THREE.Scene();
 const camera = new THREE.Camera();
 camera.matrixAutoUpdate = true;
 
-const loader = new THREE.TextureLoader();
+// Lighting for 3D items. Warm key from upper-right matches BG evening mood.
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const keyLight = new THREE.DirectionalLight(0xfff0cc, 1.1);
+keyLight.position.set(0.2, 0.3, 0.4);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x9ac0ff, 0.35);
+fillLight.position.set(-0.3, 0.1, 0.3);
+scene.add(fillLight);
+const rimLight = new THREE.DirectionalLight(0xffffff, 0.25);
+rimLight.position.set(0, 0, -0.4);
+scene.add(rimLight);
 
-function makeLayer({ name, h, aspect, x, y, z, mirror }, renderOrder, writesDepth = false) {
-  const geom = new THREE.PlaneGeometry(h * aspect, h);
-  const tex = loader.load(`./assets/${name}.png`);
+const texLoader = new THREE.TextureLoader();
+const gltfLoader = new GLTFLoader();
+
+// ---- BG plane
+function addBackground() {
+  const geom = new THREE.PlaneGeometry(BG.h * BG.aspect, BG.h);
+  const tex = texLoader.load(`./assets/${BG.name}.png`);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  if (mirror) {
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.repeat.x = -1;
-    tex.offset.x = 1;
-  }
-  const mat = new THREE.MeshBasicMaterial({
-    map: tex,
-    transparent: true,
-    alphaTest: 0.01,
-    depthWrite: writesDepth,
-    depthTest: true,
-    side: THREE.FrontSide,
-  });
+  const mat = new THREE.MeshBasicMaterial({ map: tex, depthWrite: true });
   const mesh = new THREE.Mesh(geom, mat);
-  mesh.position.set(x, -CAMERA_TO_SCREEN_CENTER_Y + y, z);
-  mesh.renderOrder = renderOrder;
-  return mesh;
+  mesh.position.set(0, -CAMERA_TO_SCREEN_CENTER_Y, BG.z);
+  mesh.renderOrder = 0;
+  scene.add(mesh);
 }
 
-// BG renders first and writes depth.
-const bgMesh = makeLayer(BG, 0, /* writesDepth */ true);
-scene.add(bgMesh);
+addBackground();
 
-// Decor at renderOrder 5 (behind cats at 10, in front of BG at 0).
-for (const d of DECOR) {
-  scene.add(makeLayer(d, 5, false));
-}
+// ---- Items
+const itemObjects = [];
 
-// Hiders paint on top of cats. renderOrder 20 > cat's 10.
-for (const h of HIDERS) {
-  scene.add(makeLayer(h, 20, false));
-}
+async function loadItems() {
+  const promises = ITEMS.map((item, i) => new Promise((resolve, reject) => {
+    gltfLoader.load(
+      `./assets/items/${item.name}.glb`,
+      (gltf) => {
+        const root = gltf.scene;
+        const box = new THREE.Box3().setFromObject(root);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        root.position.sub(center);
 
-// ---- Cat spawning
-let catMeshes = [];
-function spawnCats() {
-  for (const m of catMeshes) {
-    scene.remove(m);
-    m.material.map?.dispose();
-    m.material.dispose();
-    m.geometry.dispose();
-  }
-  catMeshes = [];
-
-  const ez = 0.30; // anchor point for placement math (roughly eye rest distance)
-
-  for (let i = 0; i < HIDERS.length; i++) {
-    const h = HIDERS[i];
-    const mesh_w = h.h * h.aspect;
-    const mesh_h = h.h;
-    // Silhouette centre in world (mesh-local XY with y-flip from PNG).
-    const silWorldX = h.x + (h.silX - 0.5) * mesh_w;
-    const silWorldY = (-CAMERA_TO_SCREEN_CENTER_Y + h.y) + (0.5 - h.silY) * mesh_h;
-
-    // Project that point to screen coords at resting eye=(0,0,ez).
-    // Viewing from (0,0,ez) onto plane z=h.z, line to z=0:
-    //   screen_x = silWorldX * ez / (ez - h.z); same for y.
-    const zRatioHider = ez / (ez - h.z);
-    const screenX_sil = silWorldX * zRatioHider;
-    const screenY_sil = silWorldY * zRatioHider;
-
-    // Apply peek offset (screen-space) to where the cat should appear at rest.
-    const screenX_cat = screenX_sil + h.peekX;
-    const screenY_cat = screenY_sil + h.peekY;
-
-    // Solve for cat world position that projects to that screen point at rest.
-    const catZ = h.z + CAT_DEPTH_OFFSETS[i];
-    const zRatioCat = ez / (ez - catZ);
-    const catWorldX = screenX_cat / zRatioCat;
-    const catWorldY = screenY_cat / zRatioCat;
-    const catLocalY = catWorldY + CAMERA_TO_SCREEN_CENTER_Y;
-
-    const mesh = makeLayer(
-      { name: 'cat', h: CAT_H, aspect: 1.0, x: catWorldX, y: catLocalY, z: catZ },
-      10,
-      false,
+        const pivot = new THREE.Group();
+        pivot.add(root);
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const scale = item.size / maxDim;
+        pivot.scale.setScalar(scale);
+        pivot.position.set(item.x, -CAMERA_TO_SCREEN_CENTER_Y + item.y, item.z);
+        pivot.rotation.set(item.rotX || 0, item.rotY || 0, item.rotZ || 0);
+        pivot.userData.id = i;
+        pivot.userData.name = item.name;
+        pivot.userData.found = false;
+        pivot.renderOrder = 10;
+        scene.add(pivot);
+        itemObjects.push(pivot);
+        resolve();
+      },
+      undefined,
+      reject,
     );
-    mesh.userData.catId = i;
-    mesh.userData.found = false;
-    scene.add(mesh);
-    catMeshes.push(mesh);
-  }
+  }));
+  await Promise.all(promises);
 }
 
 // ---- Off-axis projection
@@ -330,11 +266,10 @@ function renderFrame() {
 }
 
 // ---- Game state
-let level = 1;
 let foundCount = 0;
 
 function updateCounter() {
-  counterEl.textContent = `Level ${level}  •  ${foundCount} / ${HIDERS.length}`;
+  counterEl.textContent = `${foundCount} / ${ITEMS.length}`;
 }
 
 function showToast(text, duration = 1200) {
@@ -344,26 +279,20 @@ function showToast(text, duration = 1200) {
   showToast._t = setTimeout(() => toast.classList.remove('show'), duration);
 }
 
-function onCatFound(mesh) {
-  if (mesh.userData.found) return;
-  mesh.userData.found = true;
-  mesh.visible = false;
+function onItemFound(root) {
+  if (root.userData.found) return;
+  root.userData.found = true;
+  root.visible = false;
   foundCount += 1;
   updateCounter();
-  if (foundCount >= HIDERS.length) {
-    showToast(`Level ${level} geschafft! 🎉`, 1600);
-    setTimeout(() => {
-      level += 1;
-      foundCount = 0;
-      spawnCats();
-      updateCounter();
-    }, 1600);
+  if (foundCount >= ITEMS.length) {
+    showToast('Alle gefunden!', 2400);
   } else {
     showToast('Gefunden!');
   }
 }
 
-// ---- Tap handler — raycast against cat meshes.
+// ---- Tap handler: raycast against 3D item groups.
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector3();
 
@@ -377,10 +306,12 @@ function handleTap(clientX, clientY) {
   ndc.unproject(camera);
   raycaster.ray.origin.copy(camera.position);
   raycaster.ray.direction.copy(ndc).sub(camera.position).normalize();
-  const liveCats = catMeshes.filter((m) => m.visible && !m.userData.found);
-  const hits = raycaster.intersectObjects(liveCats, false);
+  const live = itemObjects.filter((o) => o.visible && !o.userData.found);
+  const hits = raycaster.intersectObjects(live, true);
   if (hits.length > 0) {
-    onCatFound(hits[0].object);
+    let o = hits[0].object;
+    while (o && !itemObjects.includes(o)) o = o.parent;
+    if (o) onItemFound(o);
   }
 }
 
@@ -393,17 +324,17 @@ async function start() {
   try {
     await initCamera();
     await initFaceLandmarker();
+    await loadItems();
   } catch (err) {
     console.error(err);
     startBtn.disabled = false;
     startBtn.textContent = 'Starten';
-    alert('Kamera / Face-Tracking konnte nicht gestartet werden:\n' + (err?.message || err));
+    alert('Start fehlgeschlagen:\n' + (err?.message || err));
     return;
   }
   startEl.style.display = 'none';
   counterEl.classList.remove('hidden');
   hud.classList.remove('hidden');
-  spawnCats();
   updateCounter();
   requestAnimationFrame(renderFrame);
 }
