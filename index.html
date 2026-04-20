@@ -22,6 +22,15 @@
       width: 100vw;
       height: 100vh;
     }
+    #cam {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+      top: -10px;
+      left: -10px;
+    }
     #start, #counter, #toast {
       position: fixed;
       color: #fff;
@@ -36,7 +45,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.85);
+      background: rgba(0,0,0,0.88);
       z-index: 10;
       pointer-events: auto;
       cursor: pointer;
@@ -48,9 +57,10 @@
     }
     #start p {
       font-size: 14px;
-      opacity: 0.75;
+      opacity: 0.8;
       margin: 0 20px 24px;
-      line-height: 1.4;
+      line-height: 1.45;
+      max-width: 280px;
     }
     #start button {
       font-size: 16px;
@@ -94,9 +104,10 @@
 </head>
 <body>
   <canvas id="scene"></canvas>
+  <video id="cam" autoplay playsinline muted></video>
   <div id="start">
     <h1>Find the Items</h1>
-    <p>Finde die 7 versteckten Gegenstände im Bild.<br>Tippe sie einfach an.</p>
+    <p>Bewege deinen Kopf, um ins Regal zu schauen. Tippe die 7 Gegenstände an, wenn du sie findest.</p>
     <button id="startBtn">Starten</button>
   </div>
   <div id="counter" class="hidden">0 / 7</div>
